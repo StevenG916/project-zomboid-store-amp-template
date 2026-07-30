@@ -69,6 +69,19 @@ The Steam Workshop store is enabled by this template — the stock Project Zombo
 does not declare store support at all, so on that one there is no store page to install
 from in the first place.
 
+### One manual step: a Steam Web API key
+
+AMP's Steam Workshop store needs a Steam Web API key to browse and resolve workshop items.
+Without one, the store page loads but every search comes back empty.
+
+Get a key from [steamcommunity.com/dev/apikey](https://steamcommunity.com/dev/apikey) and
+paste it into **Configuration → Updates → Steam Workshop → Steam Web API key**. It is free
+and takes a minute; Steam asks for a domain name, and any domain you control is accepted.
+
+The key is per instance and stored encrypted, so it cannot be copied between instances —
+each new instance needs it pasted in (verified: copying the encrypted value from another
+instance on the same AMP installation does not work, searches silently return nothing).
+
 ### Settings
 
 Under **Configuration → Project Zomboid → Store Mods**:
