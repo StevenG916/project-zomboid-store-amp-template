@@ -423,12 +423,12 @@
         }
     },
     {
-        "DisplayName": "Allow Texture-Only Mods",
+        "DisplayName": "Skip Texture-Only Mods",
         "Category": "Project Zomboid:stadia_controller",
         "Subcategory": "Store Mods:extension:2",
-        "Description": "By default, mods that only contain textures or models are not activated: they do nothing on a dedicated server (players see them by installing them locally), and loading them server-side has been linked to runaway memory use that ends in the server being killed. Only enable this if you know you need it",
+        "Description": "Refuse to activate mods that contain only textures or models, instead of activating them with a warning. Such mods usually do nothing on a dedicated server (players see a texture pack by installing it themselves) and some have caused servers to grow until they were killed for running out of memory - but a newer version may well be fine, so by default the choice is left to you and the update log just warns",
         "Keywords": "mods,textures,models,memory,skip",
-        "FieldName": "StoreModAllowTextureOnly",
+        "FieldName": "StoreModSkipTextureOnly",
         "InputType": "checkbox",
         "IsFlagArgument": false,
         "ParamFieldName": "",

@@ -26,15 +26,20 @@ On every update, after the game and any store items are downloaded:
 * finds each item's mods and their IDs from `mod.info`
 * writes `Mods=` and `WorkshopItems=` for you, in **dependency order** — a mod that
   declares `require` / `loadAfter` / `loadBefore` is placed accordingly
-* **refuses mods that declare a conflict** with something already active, and tells you
-  which mod to remove
 * **warns about missing dependencies**, including which workshop item provides them
-* **skips texture-only mods** (no scripts, Lua or maps). They do nothing on a dedicated
-  server — players see them by installing them locally — and running one server-side has
-  been linked to runaway native memory use that ends with the server being OOM-killed
+* **warns about declared conflicts** between mods you have active
+* **warns about texture-only mods** (no scripts, Lua or maps), which usually do nothing on
+  a dedicated server — players see a texture pack by installing it themselves — and some of
+  which have made servers grow until they were killed for running out of memory
 * uninstall an item in the store and its mods come back out of the list
 
 Everything it does is written to the update log, so you can see exactly what changed.
+
+**It warns; it does not veto.** If you install something, it gets activated. Mod authors'
+compatibility metadata goes stale, conflicts get patched, and a texture pack that misbehaved
+last year may be fine today — you are the one who can judge that, so the warnings tell you
+what to watch for and leave the decision with you. If you would rather have the strict
+behaviour for texture-only mods, turn on **Skip Texture-Only Mods**.
 
 ### It won't fight you
 
@@ -68,7 +73,7 @@ Under **Configuration → Project Zomboid → Store Mods**:
 | --- | --- | --- |
 | Auto-Activate Store Mods | on | Activate store mods on update. Off = freeze the current list. |
 | Enforce Mod Load Order | on | Sort the list so dependencies load first. |
-| Allow Texture-Only Mods | off | Also activate mods that contain nothing but textures/models. Not recommended. |
+| Skip Texture-Only Mods | off | Refuse texture/model-only mods instead of activating them with a warning. |
 
 There are deliberately **no "Load Mods" / "Install Workshop Items" boxes** in this
 template. That is what makes it safe: because AMP is not managing those two keys, it

@@ -2,9 +2,10 @@
 #
 # Windows counterpart of pzstoremods.py. See that file (or the project README) for
 # what this does and why it is needed. Behaviour is intended to be identical:
-# it derives mod IDs from each store-installed workshop item's mod.info, skips
-# texture-only mods, refuses declared conflicts, keeps Mods= in dependency order,
-# and is the sole owner of the Mods= / WorkshopItems= lines in the server .ini.
+# it derives mod IDs from each store-installed workshop item's mod.info, keeps Mods=
+# in dependency order, warns (but does not refuse) on declared conflicts and on
+# texture-only mods, and is the sole owner of the Mods= / WorkshopItems= lines in
+# the server .ini.
 #
 # Runs with the instance datapath as the working directory while the game is
 # stopped. Any unexpected error leaves the config untouched.
@@ -210,7 +211,7 @@ try {
         exit 0
     }
 
-    $allowTextures = Get-Flag $settings 'StoreModAllowTextureOnly' $false
+    $skipTextures = Get-Flag $settings 'StoreModSkipTextureOnly' $false
     $enforceOrder = Get-Flag $settings 'StoreModEnforceOrder' $true
 
     $lines = [System.Collections.ArrayList]@([System.IO.File]::ReadAllLines($ini))
@@ -228,6 +229,8 @@ try {
     $active = @($currentMods | ForEach-Object { $_.TrimStart('\') })
 
     $meta = Get-WorkshopMetadata $wsDir
+    # so a conflict is reported once, not once per direction
+    $warnedPairs = New-Object 'System.Collections.Generic.HashSet[string]'
     $state = @{ items = @{} }
     if (Test-Path $StateFile) {
         try {
@@ -251,7 +254,7 @@ try {
         $own = @($meta.Keys | Where-Object { $meta[$_].items.Contains($wsid) })
         $codeIds = @($own | Where-Object { $meta[$_].code } | Sort-Object)
         $textureIds = @($own | Where-Object { -not $meta[$_].code } | Sort-Object)
-        $eligible = @($codeIds); if ($allowTextures) { $eligible += $textureIds }
+        $eligible = @($codeIds); if (-not $skipTextures) { $eligible += $textureIds }
         $adopted = @($eligible | Where-Object { $active -contains $_ })
         if ($adopted.Count -gt 0) {
             $items[$wsid] = @{ managed = $adopted; activated = $true }
@@ -262,17 +265,34 @@ try {
             }
             continue
         }
-        $managed = @()
-        foreach ($modId in $eligible) {
-            $clash = Get-Conflicts $modId (@($active) + @($managed)) $meta
-            if ($clash.Count -gt 0) {
-                Write-StoreLog ("${wsid}: NOT activating $modId - it is declared incompatible with " +
-                    (($clash | Sort-Object) -join ', ') + ". Remove the conflicting mod, then reinstall this item.")
-            } else { $managed += $modId }
-        }
+        $managed = @($eligible)
         $items[$wsid] = @{ managed = $managed; activated = $false }
         if ($managed.Count -gt 0) {
             Write-StoreLog ("${wsid}: activating " + ($managed -join ', '))
+            foreach ($modId in $managed) {
+                $others = @(@($active) + @($managed) | Where-Object { $_ -ne $modId })
+                $clash = Get-Conflicts $modId $others $meta
+                $fresh = @($clash | Sort-Object | Where-Object {
+                    -not $warnedPairs.Contains((@($modId, $_) | Sort-Object) -join '|') })
+                if ($fresh.Count -gt 0) {
+                    foreach ($other in $fresh) {
+                        [void]$warnedPairs.Add((@($modId, $other) | Sort-Object) -join '|')
+                    }
+                    Write-StoreLog ("${wsid}: WARNING - $modId is declared incompatible with " +
+                        ($fresh -join ', ') + ". Activating it anyway, since that " +
+                        "metadata is often out of date. If the server misbehaves, take one of them back out.")
+                }
+            }
+            foreach ($modId in $managed) {
+                if ($textureIds -contains $modId) {
+                    Write-StoreLog ("${wsid}: WARNING - $modId contains only textures/models. " +
+                        "Clients see a texture pack by installing it themselves, so this usually does " +
+                        "nothing server-side, and such packs have caused servers to grow until they were " +
+                        "killed for running out of memory. Activating it because you asked for it - keep " +
+                        "an eye on memory use, and turn on 'Skip Texture-Only Mods' if you would rather " +
+                        "not load these.")
+                }
+            }
             $missing = New-Object 'System.Collections.Generic.HashSet[string]'
             foreach ($modId in $managed) {
                 foreach ($dep in $meta[$modId].require) {
@@ -287,10 +307,10 @@ try {
                 Write-StoreLog "${wsid}: contains map tiles - if it adds a new map area, add it to the Map setting as well"
             }
         }
-        if ($textureIds.Count -gt 0 -and -not $allowTextures) {
+        if ($textureIds.Count -gt 0 -and $skipTextures) {
             Write-StoreLog ("${wsid}: skipping " + ($textureIds -join ', ') +
-                " - it only contains textures/models, so it does nothing server-side. " +
-                "Install it on the clients instead. (Override with 'Allow Texture-Only Mods'.)")
+                " - 'Skip Texture-Only Mods' is on and it contains only textures/models. " +
+                "Install it on the clients instead.")
         } elseif ($eligible.Count -eq 0) {
             Write-StoreLog "${wsid}: no mod.info found, so there is nothing to activate"
         }
@@ -365,8 +385,10 @@ try {
             }
         }
         foreach ($other in ($meta[$modId].incompatible | Sort-Object)) {
-            if ($final -contains $other -and $modId -lt $other) {
-                Write-StoreLog "warning: $modId and $other are declared incompatible with each other"
+            $pair = (@($modId, $other) | Sort-Object) -join '|'
+            if ($final -contains $other -and $modId -lt $other -and -not $warnedPairs.Contains($pair)) {
+                [void]$warnedPairs.Add($pair)
+                Write-StoreLog "warning: $modId and $other are declared incompatible with each other, and both are active"
             }
         }
     }

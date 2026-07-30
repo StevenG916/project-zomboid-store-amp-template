@@ -16,18 +16,21 @@ them). Anything else in the .ini is left untouched.
 What it does each run:
   * reads the store's installed item list (steamcmdplugin.kvp)
   * derives mod IDs from each downloaded item's mod.info
-  * refuses texture-only mods by default (no scripts/lua/maps). Server-side
-    texture packs are a known cause of runaway native memory use on dedicated
-    servers, and they only need to be installed client-side to be seen
-  * refuses a mod that declares (or is declared) incompatible with an active one
   * keeps Mods= in dependency order using require / loadAfter / loadBefore
   * warns about declared requirements that are not active
+  * warns, but still activates, when a mod declares (or is declared) incompatible
+    with another active mod: that metadata is often stale or simply wrong, so the
+    call belongs to whoever installed it
+  * warns, but still activates, texture-only mods (no scripts/lua/maps). They do
+    nothing server-side and older texture packs have caused runaway native memory
+    use, but a later version may be fine - set "Skip Texture-Only Mods" to opt
+    into refusing them instead
   * adopts a pre-existing selection on first run, so switching to this template
     changes nothing until you use the store; mods you removed by hand stay
     removed; entries it does not manage are preserved
 
 Toggles (Configuration -> Project Zomboid -> Store Mods):
-  Auto-Activate Store Mods, Allow Texture-Only Mods, Enforce Mod Load Order
+  Auto-Activate Store Mods, Enforce Mod Load Order, Skip Texture-Only Mods
 
 Project: https://github.com/StevenG916/project-zomboid-store-amp-template
 """
@@ -260,7 +263,7 @@ def main():
         log("no workshop items installed from the store; nothing to do")
         return 0
 
-    allow_textures = flag(settings, "StoreModAllowTextureOnly", False)
+    skip_textures = flag(settings, "StoreModSkipTextureOnly", False)
     enforce_order = flag(settings, "StoreModEnforceOrder", True)
 
     with open(ini, encoding="utf-8", errors="replace") as f:
@@ -282,6 +285,7 @@ def main():
     meta = scan_workshop(ws_dir)
     state = read_state()
     items = state["items"]
+    warned_pairs = set()  # so a conflict is reported once, not once per direction
 
     for wsid in ids:
         if wsid in items:
@@ -293,7 +297,7 @@ def main():
         info = {m: v for m, v in meta.items() if wsid in v["items"]}
         code_ids = sorted(m for m in info if info[m]["code"])
         texture_ids = sorted(m for m in info if not info[m]["code"])
-        eligible = code_ids + (texture_ids if allow_textures else [])
+        eligible = code_ids + ([] if skip_textures else texture_ids)
         adopted = [m for m in eligible if m in active]
         if adopted:
             # first run after switching templates: keep the existing selection
@@ -304,18 +308,30 @@ def main():
             if optional:
                 log("%s: leaving these off, as before: %s" % (wsid, ", ".join(optional)))
             continue
-        managed = []
-        for mod_id in eligible:
-            clash = conflicts(mod_id, active | set(managed), meta)
-            if clash:
-                log("%s: NOT activating %s - it is declared incompatible with %s. "
-                    "Remove the conflicting mod, then reinstall this item."
-                    % (wsid, mod_id, ", ".join(sorted(clash))))
-            else:
-                managed.append(mod_id)
+        managed = list(eligible)
         items[wsid] = {"managed": managed, "activated": False}
         if managed:
             log("%s: activating %s" % (wsid, ", ".join(managed)))
+            for mod_id in managed:
+                clash = conflicts(mod_id, (active | set(managed)) - {mod_id}, meta)
+                fresh = sorted(c for c in clash
+                               if tuple(sorted((mod_id, c))) not in warned_pairs)
+                if fresh:
+                    for other in fresh:
+                        warned_pairs.add(tuple(sorted((mod_id, other))))
+                    log("%s: WARNING - %s is declared incompatible with %s. Activating it "
+                        "anyway, since that metadata is often out of date. If the server "
+                        "misbehaves, take one of them back out."
+                        % (wsid, mod_id, ", ".join(fresh)))
+            for mod_id in managed:
+                if mod_id in texture_ids:
+                    log("%s: WARNING - %s contains only textures/models. Clients see a "
+                        "texture pack by installing it themselves, so this usually does "
+                        "nothing server-side, and such packs have caused servers to grow "
+                        "until they were killed for running out of memory. Activating it "
+                        "because you asked for it - keep an eye on memory use, and turn on "
+                        "'Skip Texture-Only Mods' if you would rather not load these."
+                        % (wsid, mod_id))
             missing = set()
             for mod_id in managed:
                 missing |= meta[mod_id]["require"] - active - set(managed)
@@ -326,10 +342,10 @@ def main():
             if any(meta[m]["maps"] for m in managed):
                 log("%s: contains map tiles - if it adds a new map area, add it to the "
                     "Map setting as well" % wsid)
-        if texture_ids and not allow_textures:
-            log("%s: skipping %s - it only contains textures/models, so it does nothing "
-                "server-side. Install it on the clients instead. (Override with "
-                "'Allow Texture-Only Mods'.)" % (wsid, ", ".join(texture_ids)))
+        if texture_ids and skip_textures:
+            log("%s: skipping %s - 'Skip Texture-Only Mods' is on and it contains only "
+                "textures/models. Install it on the clients instead."
+                % (wsid, ", ".join(texture_ids)))
         elif not eligible:
             log("%s: no mod.info found, so there is nothing to activate" % wsid)
 
@@ -386,9 +402,10 @@ def main():
                      if dep in meta else "not installed")
             log("note: %s requires %s (%s)" % (mod_id, dep, where))
         for other in sorted(info["incompatible"] & final):
-            if mod_id < other:
-                log("warning: %s and %s are declared incompatible with each other"
-                    % (mod_id, other))
+            if mod_id < other and (mod_id, other) not in warned_pairs:
+                warned_pairs.add((mod_id, other))
+                log("warning: %s and %s are declared incompatible with each other, and "
+                    "both are active" % (mod_id, other))
 
     changed = False
     if new_mods != current_mods:
