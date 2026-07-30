@@ -74,10 +74,43 @@ function New-MetaEntry {
     }
 }
 
-function Get-WorkshopMetadata($wsDir) {
+function Get-WorkshopDirs($base) {
+    # Every plausible location for downloaded workshop content. The store's download
+    # location is configurable and an empty value means steamcmd's own default, so
+    # look in all of them rather than assuming one.
+    $relRoot = Get-KvpValue $GenericKvp 'App.RootDir'
+    if ([string]::IsNullOrWhiteSpace($relRoot)) { $relRoot = './project-zomboid/' }
+    $root = [System.IO.Path]::GetFullPath((Join-Path $Root $relRoot))
+    $tail = "steamapps\workshop\content\$WORKSHOP_APPID"
+    $cands = @((Join-Path $base $tail), (Join-Path $root $tail), (Join-Path $Root $tail))
+    $custom = Get-KvpValue $GenericKvp 'App.SteamWorkshopDownloadLocation'
+    if (-not [string]::IsNullOrWhiteSpace($custom)) {
+        $customPath = [System.IO.Path]::GetFullPath((Join-Path $Root $custom.Trim()))
+        $cands += @((Join-Path $customPath $tail), (Join-Path $customPath $WORKSHOP_APPID), $customPath)
+    }
+    $found = @(); $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($c in $cands) {
+        $norm = $c.TrimEnd('\')
+        if ($seen.Add($norm) -and (Test-Path $norm)) { $found += $norm }
+    }
+    return $found
+}
+
+function Get-ItemDir($wsDirs, $wsid) {
+    foreach ($d in $wsDirs) {
+        $p = Join-Path $d $wsid
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+function Get-WorkshopMetadata($wsDirs) {
     $meta = @{}
-    if (-not (Test-Path $wsDir)) { return $meta }
-    foreach ($item in Get-ChildItem -Path $wsDir -Directory -ErrorAction SilentlyContinue) {
+    $allItems = @()
+    foreach ($wsDir in $wsDirs) {
+        $allItems += @(Get-ChildItem -Path $wsDir -Directory -ErrorAction SilentlyContinue)
+    }
+    foreach ($item in $allItems) {
         if ($item.Name -notmatch '^\d+$') { continue }
         $modsRoot = Join-Path $item.FullName 'mods'
         if (-not (Test-Path $modsRoot)) { continue }
@@ -197,7 +230,7 @@ try {
     $serverName = $settings['servername']
     if ([string]::IsNullOrWhiteSpace($serverName)) { $serverName = 'servertest' }
     $ini = Join-Path $base ("Zomboid\Server\{0}.ini" -f $serverName.Trim())
-    $wsDir = Join-Path $base ("steamapps\workshop\content\{0}" -f $WORKSHOP_APPID)
+    $wsDirs = Get-WorkshopDirs $base
 
     if (-not (Test-Path $ini)) {
         Write-StoreLog ("server config not found yet ({0}) - start the server once, then update again" -f (Split-Path $ini -Leaf))
@@ -206,8 +239,12 @@ try {
     $rawIds = Get-KvpValue $SteamKvp 'SteamWorkshop.WorkshopItemIDs'
     $ids = @()
     if ($rawIds) { $ids = @([regex]::Matches($rawIds, '\d{6,}') | ForEach-Object { $_.Value }) }
-    if ($ids.Count -eq 0 -and -not (Test-Path $wsDir)) {
+    if ($ids.Count -eq 0) {
         Write-StoreLog 'no workshop items installed from the store; nothing to do'
+        exit 0
+    }
+    if ($wsDirs.Count -eq 0) {
+        Write-StoreLog ("{0} item(s) installed from the store, but no downloaded workshop content found yet - run the update again once the download has finished" -f $ids.Count)
         exit 0
     }
 
@@ -228,7 +265,7 @@ try {
     $currentWs = @(Split-IniList $lines[$wsIdx].Substring(14))
     $active = @($currentMods | ForEach-Object { $_.TrimStart('\') })
 
-    $meta = Get-WorkshopMetadata $wsDir
+    $meta = Get-WorkshopMetadata $wsDirs
     # so a conflict is reported once, not once per direction
     $warnedPairs = New-Object 'System.Collections.Generic.HashSet[string]'
     $state = @{ items = @{} }
@@ -247,7 +284,7 @@ try {
 
     foreach ($wsid in $ids) {
         if ($items.ContainsKey($wsid)) { continue }
-        if (-not (Test-Path (Join-Path $wsDir $wsid))) {
+        if ($null -eq (Get-ItemDir $wsDirs $wsid)) {
             Write-StoreLog "${wsid}: not downloaded yet - it will be picked up after the next update"
             continue
         }
@@ -356,8 +393,10 @@ try {
     if (@($currentMods | Where-Object { $_.StartsWith('\') }).Count -gt 0) {
         $prefix = '\'
     } elseif ($currentMods.Count -eq 0) {
-        if (@(Get-ChildItem -Path $wsDir -Recurse -Filter 'mod.info' -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Directory.Name -match '^4[2-9]' }).Count -gt 0) { $prefix = '\' }
+        foreach ($d in $wsDirs) {
+            if (@(Get-ChildItem -Path $d -Recurse -Filter 'mod.info' -File -ErrorAction SilentlyContinue |
+                  Where-Object { $_.Directory.Name -match '^4[2-9]' }).Count -gt 0) { $prefix = '\'; break }
+        }
     }
     $newMods = @($currentMods | Where-Object { -not $dropMods.Contains($_.TrimStart('\')) })
     $have = @($newMods | ForEach-Object { $_.TrimStart('\') })

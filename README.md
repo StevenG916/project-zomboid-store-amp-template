@@ -65,6 +65,10 @@ Refresh the template list, then create a new instance and pick
 Then just use the store: open the instance, go to the **Steam Workshop** page, install
 mods, and press **Update**. Watch the update log for `[StoreMods]` lines.
 
+The Steam Workshop store is enabled by this template — the stock Project Zomboid template
+does not declare store support at all, so on that one there is no store page to install
+from in the first place.
+
 ### Settings
 
 Under **Configuration → Project Zomboid → Store Mods**:

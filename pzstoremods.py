@@ -96,6 +96,39 @@ def base_dir():
     return os.path.normpath(os.path.join(ROOT, rel))
 
 
+def workshop_dirs(base):
+    """Every plausible location for downloaded workshop content, in preference
+    order. The store's download location is configurable and an empty value means
+    steamcmd's own default, so look in all of them rather than assuming one."""
+    rel_root = kvp_value(GENERIC_KVP, "App.RootDir") or "./project-zomboid/"
+    root = os.path.normpath(os.path.join(ROOT, rel_root))
+    tail = ("steamapps", "workshop", "content", WORKSHOP_APPID)
+    cands = [os.path.join(d, *tail) for d in (base, root, ROOT)]
+    custom = kvp_value(GENERIC_KVP, "App.SteamWorkshopDownloadLocation")
+    if custom and custom.strip():
+        custom = os.path.normpath(os.path.join(ROOT, custom.strip()))
+        cands += [os.path.join(custom, *tail),
+                  os.path.join(custom, WORKSHOP_APPID),
+                  custom]
+    found, seen = [], set()
+    for cand in cands:
+        cand = os.path.normpath(cand)
+        if cand not in seen:
+            seen.add(cand)
+            if os.path.isdir(cand):
+                found.append(cand)
+    return found
+
+
+def item_dir(ws_dirs, wsid):
+    """The directory holding a workshop item, or None if it isn't downloaded."""
+    for d in ws_dirs:
+        path = os.path.join(d, wsid)
+        if os.path.isdir(path):
+            return path
+    return None
+
+
 def ini_path(base, settings):
     name = (settings.get("servername") or "servertest").strip() or "servertest"
     return os.path.join(base, "Zomboid", "Server", name + ".ini")
@@ -111,13 +144,16 @@ def split_ids(value):
     return out
 
 
-def scan_workshop(ws_dir):
-    """Inspect every downloaded workshop item.
+def scan_workshop(ws_dirs):
+    """Inspect every downloaded workshop item across all content directories.
 
     Returns {mod_id: {require, incompatible, after, before, code, maps, items}}.
     Flags are OR-ed when a mod ID appears in more than one place."""
     meta = {}
-    for item_dir in sorted(glob.glob(os.path.join(ws_dir, "*", ""))):
+    items = []
+    for ws_dir in ws_dirs:
+        items += sorted(glob.glob(os.path.join(ws_dir, "*", "")))
+    for item_dir in items:
         wsid = os.path.basename(os.path.dirname(item_dir))
         if not wsid.isdigit():
             continue
@@ -165,7 +201,7 @@ def scan_workshop(ws_dir):
     return meta
 
 
-def uses_backslash(ws_dir, entries):
+def uses_backslash(ws_dirs, entries):
     """Build 42 servers want mod IDs prefixed with a backslash. Follow whatever
     the existing list does; otherwise infer from the mod packaging layout."""
     for e in entries:
@@ -173,7 +209,8 @@ def uses_backslash(ws_dir, entries):
             return True
     if entries:
         return False
-    return bool(glob.glob(os.path.join(ws_dir, "*", "mods", "*", "4[2-9]*", "mod.info")))
+    return any(glob.glob(os.path.join(d, "*", "mods", "*", "4[2-9]*", "mod.info"))
+               for d in ws_dirs)
 
 
 def conflicts(mod_id, active, meta):
@@ -252,15 +289,19 @@ def main():
 
     base = base_dir()
     ini = ini_path(base, settings)
-    ws_dir = os.path.join(base, "steamapps", "workshop", "content", WORKSHOP_APPID)
+    ws_dirs = workshop_dirs(base)
     if not os.path.exists(ini):
         log("server config not found yet (%s) - start the server once, then update again"
             % os.path.basename(ini))
         return 0
 
     ids = store_item_ids()
-    if not ids and not os.path.isdir(ws_dir):
+    if not ids:
         log("no workshop items installed from the store; nothing to do")
+        return 0
+    if not ws_dirs:
+        log("%d item(s) installed from the store, but no downloaded workshop content "
+            "found yet - run the update again once the download has finished" % len(ids))
         return 0
 
     skip_textures = flag(settings, "StoreModSkipTextureOnly", False)
@@ -282,7 +323,7 @@ def main():
     current_ws = parse_list(lines[ws_line].rstrip("\r\n")[14:])
     active = {m.lstrip("\\") for m in current_mods}
 
-    meta = scan_workshop(ws_dir)
+    meta = scan_workshop(ws_dirs)
     state = read_state()
     items = state["items"]
     warned_pairs = set()  # so a conflict is reported once, not once per direction
@@ -290,7 +331,7 @@ def main():
     for wsid in ids:
         if wsid in items:
             continue
-        if not os.path.isdir(os.path.join(ws_dir, wsid)):
+        if item_dir(ws_dirs, wsid) is None:
             log("%s: not downloaded yet - it will be picked up after the next update"
                 % wsid)
             continue
@@ -380,7 +421,7 @@ def main():
         log("removed from the store, so deactivating: %s"
             % ", ".join(sorted(drop_mods | drop_ws)))
 
-    prefix = "\\" if uses_backslash(ws_dir, current_mods) else ""
+    prefix = "\\" if uses_backslash(ws_dirs, current_mods) else ""
     new_mods = [m for m in current_mods if m.lstrip("\\") not in drop_mods]
     have = {m.lstrip("\\") for m in new_mods}
     new_mods += [prefix + m for m in sorted(wanted_mods) if m not in have]
