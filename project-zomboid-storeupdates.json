@@ -51,7 +51,7 @@
         "UpdateSource": "FetchURL",
         "UpdateSourceData": "https://raw.githubusercontent.com/StevenG916/project-zomboid-store-amp-template/main/pzstoremods.py",
         "UpdateSourceArgs": "pzstoremods.py",
-        "UpdateSourceTarget": "{{$FullRootDir}}",
+        "UpdateSourceTarget": "{{$FullInstanceDir}}",
         "OverwriteExistingFiles": true,
         "SkipOnFailure": true
     },
@@ -61,7 +61,7 @@
         "UpdateSource": "FetchURL",
         "UpdateSourceData": "https://raw.githubusercontent.com/StevenG916/project-zomboid-store-amp-template/main/pzstoremods.ps1",
         "UpdateSourceArgs": "pzstoremods.ps1",
-        "UpdateSourceTarget": "{{$FullRootDir}}",
+        "UpdateSourceTarget": "{{$FullInstanceDir}}",
         "OverwriteExistingFiles": true,
         "SkipOnFailure": true
     },
@@ -78,7 +78,7 @@
         "UpdateSourcePlatform": "Windows",
         "UpdateSource": "Executable",
         "UpdateSourceData": "powershell.exe",
-        "UpdateSourceArgs": "-NoProfile -ExecutionPolicy Bypass -File \".\\pzstoremods.ps1\"",
+        "UpdateSourceArgs": "-NoProfile -ExecutionPolicy Bypass -File \"pzstoremods.ps1\"",
         "SkipOnFailure": true
     }
 ]
